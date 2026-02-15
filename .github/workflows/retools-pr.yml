@@ -105,7 +105,7 @@ jobs:
         run: |
           node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
-            --status "cloning_complete" \
+            --status "cloning" \
             --message "Repository cloned successfully" \
             --webhook-url "${{ steps.parse.outputs.webhook_url }}"
 
@@ -336,7 +336,7 @@ jobs:
 
           node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
-            --status "build_complete" \
+            --status "building" \
             --message "$MESSAGE" \
             --webhook-url "${{ steps.parse.outputs.webhook_url }}"
 
