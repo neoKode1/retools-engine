@@ -82,6 +82,9 @@ async function sendWebhook() {
   console.log(`   Job ID: ${jobId}`);
   console.log(`   Status: ${status}`);
   console.log(`   Message: ${message || 'N/A'}`);
+  console.log(`   Payload: ${JSON.stringify(payload)}`);
+  console.log(`   Signature: ${signature}`);
+  console.log(`   Secret (first 8 chars): ${webhookSecret.substring(0, 8)}...`);
 
   try {
     const response = await fetch(webhookUrl, {
