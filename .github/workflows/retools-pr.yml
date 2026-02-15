@@ -144,7 +144,20 @@ jobs:
           fi
 
       # ===================================================================
-      # STEP 6: Apply AI Changes
+      # STEP 6: Send Webhook - Starting AI Customization
+      # ===================================================================
+      - name: Webhook - Starting Customization
+        env:
+          RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
+        run: |
+          node pegasus-engine/scripts/webhook-driver.js \
+            --job-id "${{ steps.parse.outputs.job_id }}" \
+            --status "customizing" \
+            --message "AI is analyzing and customizing your code..." \
+            --webhook-url "${{ steps.parse.outputs.webhook_url }}"
+
+      # ===================================================================
+      # STEP 7: Apply AI Changes
       # ===================================================================
       - name: Apply AI Changes with Claude
         working-directory: ./repo
@@ -163,7 +176,7 @@ jobs:
           echo "✅ AI changes applied"
 
       # ===================================================================
-      # STEP 7: Commit Changes
+      # STEP 8: Commit Changes
       # ===================================================================
       - name: Commit Changes
         working-directory: ./repo
@@ -180,27 +193,27 @@ jobs:
           echo "✅ Changes committed"
 
       # ===================================================================
-      # STEP 8: Send Webhook - AI Complete
+      # STEP 9: Send Webhook - Starting Build Validation
       # ===================================================================
-      - name: Webhook - AI Complete
-        if: always()
+      - name: Webhook - Starting Build
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
           node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
-            --status "ai_complete" \
-            --message "AI changes applied and committed" \
+            --status "building" \
+            --message "Validating build with AI auto-fix..." \
             --webhook-url "${{ steps.parse.outputs.webhook_url }}"
 
       # ===================================================================
-      # STEP 9: Build and Auto-Fix Loop (Up to 3 AI Attempts)
+      # STEP 10: Build and Auto-Fix Loop (Up to 3 AI Attempts)
       # ===================================================================
       - name: Build with AI Auto-Fix
         id: build
         working-directory: ./repo
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
           MAX_ATTEMPTS=3
           ATTEMPT=1
@@ -268,6 +281,15 @@ jobs:
               exit 1
             fi
 
+            # Send webhook about fix attempt
+            echo ""
+            echo "📡 Sending webhook - AI attempting fix $ATTEMPT..."
+            node ../pegasus-engine/scripts/webhook-driver.js \
+              --job-id "${{ steps.parse.outputs.job_id }}" \
+              --status "building" \
+              --message "Build failed, AI attempting fix $ATTEMPT of 3..." \
+              --webhook-url "${{ steps.parse.outputs.webhook_url }}"
+
             # Ask AI to fix the build error
             echo ""
             echo "🤖 Asking AI to fix build errors (attempt $ATTEMPT)..."
@@ -319,7 +341,20 @@ jobs:
             --webhook-url "${{ steps.parse.outputs.webhook_url }}"
 
       # ===================================================================
-      # STEP 11: Push Branch
+      # STEP 11: Send Webhook - Starting Deployment
+      # ===================================================================
+      - name: Webhook - Starting Deployment
+        env:
+          RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
+        run: |
+          node pegasus-engine/scripts/webhook-driver.js \
+            --job-id "${{ steps.parse.outputs.job_id }}" \
+            --status "deploying" \
+            --message "Creating pull request..." \
+            --webhook-url "${{ steps.parse.outputs.webhook_url }}"
+
+      # ===================================================================
+      # STEP 12: Push Branch
       # ===================================================================
       - name: Push Branch
         working-directory: ./repo
@@ -339,7 +374,7 @@ jobs:
         id: push
 
       # ===================================================================
-      # STEP 12: Create Pull Request
+      # STEP 13: Create Pull Request
       # ===================================================================
       - name: Create Pull Request
         id: pr
@@ -369,7 +404,7 @@ jobs:
           echo "✅ Pull Request created: $PR_URL"
 
       # ===================================================================
-      # STEP 13: Send Success Webhook
+      # STEP 14: Send Success Webhook
       # ===================================================================
       - name: Webhook - Success
         if: success()
@@ -378,14 +413,14 @@ jobs:
         run: |
           node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
-            --status "completed" \
-            --message "PR created successfully" \
+            --status "preview_ready" \
+            --message "PR created successfully - ready for review" \
             --pr-url "${{ steps.pr.outputs.pr_url }}" \
             --pr-number "${{ steps.pr.outputs.pr_number }}" \
             --webhook-url "${{ steps.parse.outputs.webhook_url }}"
 
       # ===================================================================
-      # STEP 14: Send Failure Webhook
+      # STEP 15: Send Failure Webhook
       # ===================================================================
       - name: Webhook - Failure
         if: failure()
