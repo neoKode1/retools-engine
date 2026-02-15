@@ -104,11 +104,157 @@ function scanRepository() {
 }
 
 /**
+ * Read a file safely, returning empty string if it doesn't exist or is too large
+ */
+function safeReadFile(filePath, maxBytes = 8000) {
+  try {
+    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workingDir, filePath);
+    if (!fs.existsSync(fullPath)) return '';
+    const stat = fs.statSync(fullPath);
+    if (stat.size > maxBytes) {
+      // Read only the first maxBytes
+      const buf = Buffer.alloc(maxBytes);
+      const fd = fs.openSync(fullPath, 'r');
+      fs.readSync(fd, buf, 0, maxBytes, 0);
+      fs.closeSync(fd);
+      return buf.toString('utf-8') + '\n... [truncated]';
+    }
+    return fs.readFileSync(fullPath, 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Find files matching patterns (glob-lite)
+ */
+function findFiles(fileList, patterns) {
+  return fileList.filter((f) => patterns.some((p) => {
+    if (p.startsWith('*')) return f.endsWith(p.slice(1));
+    if (p.endsWith('*')) return f.startsWith(p.slice(0, -1));
+    return f === p || f.endsWith('/' + p) || f.includes(p);
+  }));
+}
+
+/**
+ * Extract branding context — README, styles, config, layouts, key components
+ */
+function extractBrandingContext(files) {
+  console.log('🎨 Extracting branding & style context...');
+
+  const branding = {};
+
+  // 1. README — project name, purpose, identity
+  const readmePatterns = ['README.md', 'readme.md', 'Readme.md'];
+  for (const p of readmePatterns) {
+    const content = safeReadFile(p, 4000);
+    if (content) {
+      branding.readme = content;
+      console.log('  📄 Found README.md');
+      break;
+    }
+  }
+
+  // 2. Tailwind config — color palette, fonts, theme
+  const tailwindMatches = findFiles(files, [
+    'tailwind.config.js', 'tailwind.config.ts', 'tailwind.config.mjs', 'tailwind.config.cjs',
+  ]);
+  for (const f of tailwindMatches) {
+    const content = safeReadFile(f);
+    if (content) {
+      branding.tailwindConfig = content;
+      console.log(`  🎨 Found tailwind config: ${f}`);
+      break;
+    }
+  }
+
+  // 3. Global CSS — base styles, custom properties, color variables
+  const cssPatterns = [
+    'app.css', 'globals.css', 'global.css', 'index.css', 'main.css',
+    'styles/globals.css', 'styles/global.css', 'src/app.css', 'src/index.css',
+    'src/styles/globals.css', 'app/globals.css', 'app/layout.css',
+  ];
+  const cssMatches = findFiles(files, cssPatterns);
+  for (const f of cssMatches) {
+    const content = safeReadFile(f);
+    if (content) {
+      branding.globalCSS = content;
+      console.log(`  🎨 Found global CSS: ${f}`);
+      break;
+    }
+  }
+
+  // 4. Layout files — app shell, navbar, header, footer
+  const layoutPatterns = [
+    '+layout.svelte', 'layout.svelte',
+    'app/layout.tsx', 'app/layout.jsx', 'app/layout.js',
+    '_app.tsx', '_app.jsx', '_app.js',
+    'App.vue', 'App.svelte', 'App.tsx', 'App.jsx',
+  ];
+  const layoutMatches = findFiles(files, layoutPatterns);
+  const layoutContents = [];
+  for (const f of layoutMatches.slice(0, 2)) {
+    const content = safeReadFile(f, 6000);
+    if (content) {
+      layoutContents.push({ path: f, content });
+      console.log(`  🏗️  Found layout: ${f}`);
+    }
+  }
+  if (layoutContents.length) branding.layouts = layoutContents;
+
+  // 5. Navbar / Header components
+  const navPatterns = [
+    'Navbar', 'navbar', 'Header', 'header', 'Nav.', 'nav.',
+    'TopBar', 'topbar', 'AppBar', 'appbar', 'SiteHeader', 'Navigation',
+  ];
+  const navMatches = findFiles(files, navPatterns);
+  const navContents = [];
+  for (const f of navMatches.slice(0, 2)) {
+    const content = safeReadFile(f, 4000);
+    if (content) {
+      navContents.push({ path: f, content });
+      console.log(`  🧭 Found nav/header: ${f}`);
+    }
+  }
+  if (navContents.length) branding.navComponents = navContents;
+
+  // 6. Homepage / landing page (the thing most likely being modified)
+  const homePatterns = [
+    '+page.svelte', 'page.tsx', 'page.jsx', 'page.js',
+    'index.tsx', 'index.jsx', 'index.svelte', 'Home.tsx', 'Home.jsx',
+  ];
+  // Only grab root-level pages, not nested routes
+  const homeMatches = findFiles(files, homePatterns).filter(
+    (f) => f.split('/').length <= 3
+  );
+  for (const f of homeMatches.slice(0, 1)) {
+    const content = safeReadFile(f, 6000);
+    if (content) {
+      branding.homepage = { path: f, content };
+      console.log(`  🏠 Found homepage: ${f}`);
+    }
+  }
+
+  // 7. package.json name field for project identity
+  if (fs.existsSync('package.json')) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
+      if (pkg.name) branding.projectName = pkg.name;
+      if (pkg.description) branding.projectDescription = pkg.description;
+    } catch {}
+  }
+
+  const foundItems = Object.keys(branding).length;
+  console.log(`  ✅ Extracted ${foundItems} branding context items`);
+  return branding;
+}
+
+/**
  * Build context for Claude
  */
 function buildContext(files) {
   const context = {
-    files: files.slice(0, 20), // Limit files in context
+    files: files.slice(0, 30),
     structure: {},
   };
 
@@ -118,6 +264,9 @@ function buildContext(files) {
     context.framework = detectFramework(pkg);
     context.dependencies = Object.keys(pkg.dependencies || {});
   }
+
+  // Extract branding context — the critical missing piece
+  context.branding = extractBrandingContext(files);
 
   return context;
 }
@@ -136,10 +285,114 @@ function detectFramework(pkg) {
 }
 
 /**
+ * Format branding context into a readable string for the prompt
+ */
+function formatBrandingForPrompt(branding) {
+  if (!branding || Object.keys(branding).length === 0) return '';
+
+  const sections = [];
+
+  // Project identity
+  if (branding.projectName || branding.projectDescription) {
+    sections.push(`## Project Identity
+- Name: ${branding.projectName || 'Unknown'}
+- Description: ${branding.projectDescription || 'Not specified'}`);
+  }
+
+  // README
+  if (branding.readme) {
+    sections.push(`## README.md (Project Documentation)
+\`\`\`
+${branding.readme}
+\`\`\``);
+  }
+
+  // Tailwind config
+  if (branding.tailwindConfig) {
+    sections.push(`## Tailwind Config (Color Palette & Theme)
+\`\`\`
+${branding.tailwindConfig}
+\`\`\``);
+  }
+
+  // Global CSS
+  if (branding.globalCSS) {
+    sections.push(`## Global CSS (Base Styles & Variables)
+\`\`\`css
+${branding.globalCSS}
+\`\`\``);
+  }
+
+  // Layouts
+  if (branding.layouts && branding.layouts.length) {
+    for (const layout of branding.layouts) {
+      sections.push(`## Layout File: ${layout.path}
+\`\`\`
+${layout.content}
+\`\`\``);
+    }
+  }
+
+  // Nav components
+  if (branding.navComponents && branding.navComponents.length) {
+    for (const nav of branding.navComponents) {
+      sections.push(`## Nav/Header Component: ${nav.path}
+\`\`\`
+${nav.content}
+\`\`\``);
+    }
+  }
+
+  // Homepage
+  if (branding.homepage) {
+    sections.push(`## Current Homepage: ${branding.homepage.path}
+\`\`\`
+${branding.homepage.content}
+\`\`\``);
+  }
+
+  return sections.join('\n\n');
+}
+
+/**
  * Call Claude API to generate changes
  */
 async function callClaude(prompt, context, isFixMode = false) {
   console.log('\n🤖 Calling Claude API...');
+
+  const brandingText = formatBrandingForPrompt(context.branding);
+  const hasBranding = brandingText.length > 0;
+
+  const brandingInstructions = hasBranding
+    ? `
+
+═══════════════════════════════════════════════════════
+EXISTING PROJECT BRANDING & STYLE CONTEXT
+═══════════════════════════════════════════════════════
+
+${brandingText}
+
+═══════════════════════════════════════════════════════
+BRANDING PRESERVATION RULES (MANDATORY)
+═══════════════════════════════════════════════════════
+
+You MUST follow these rules when generating code:
+
+1. **USE THE PROJECT'S REAL NAME** — Never use placeholder names like "YourBrand", "MyApp", "Acme", or "CompanyName". The project's real name and identity are in the README and package.json above. Use them.
+
+2. **MATCH THE EXISTING COLOR SCHEME** — The tailwind config and CSS files above define the project's exact colors. Use those exact color classes/variables. Do NOT invent new color palettes (no random purple, blue, or other off-brand colors).
+
+3. **PRESERVE THE EXISTING THEME** — If the project uses a dark theme, keep it dark. If it uses light, keep it light. Match the existing background colors, text colors, and accent colors exactly.
+
+4. **REUSE EXISTING COMPONENT PATTERNS** — The layout files, navbar, and homepage above show how the project structures its UI. Follow the same patterns: same CSS classes, same component structure, same spacing conventions.
+
+5. **MATCH THE EXISTING TYPOGRAPHY** — Use the same font families, sizes, and weights defined in the tailwind config and CSS.
+
+6. **DO NOT ADD GENERIC MARKETING COPY** — Don't add placeholder text like "Build Something Amazing" or "Welcome to our platform". If the project has a specific tagline or description in the README, use that.
+
+7. **STAY CONSISTENT WITH EXISTING PAGES** — If other pages in the project use specific UI patterns (cards, buttons, gradients), your changes should use those same patterns.
+`
+    : '';
 
   const systemPrompt = isFixMode
     ? `You are Retools AI, an expert debugging and error-fixing assistant.
@@ -156,12 +409,12 @@ The previous AI changes caused a build failure. Analyze the build error and fix 
 - Focus ONLY on fixing the build errors shown in the prompt
 - Make MINIMAL changes - only what's needed to fix the build
 - DO NOT add new features or make unrelated changes
-- Preserve all existing functionality
+- Preserve all existing functionality and BRANDING (colors, names, theme)
 - Follow the project's coding style and framework conventions
 - If the error is about missing dependencies, add them to package.json
 - If the error is about syntax, fix the syntax errors
 - If the error is about missing files, create them with minimal content
-
+${brandingInstructions}
 Respond with a JSON array of file modifications in this format:
 [
   {
@@ -176,9 +429,10 @@ Respond with a JSON array of file modifications in this format:
 - Framework: ${context.framework || 'Unknown'}
 - Files: ${context.files.length} source files
 - Dependencies: ${context.dependencies?.slice(0, 10).join(', ') || 'None'}
-
+- File list: ${context.files.join(', ')}
+${brandingInstructions}
 **Your task:**
-Apply the requested changes to the codebase. Be precise and preserve the existing code style and framework conventions.
+Apply the requested changes to the codebase. Be precise and preserve the existing code style, framework conventions, and BRANDING.
 
 **Important:**
 - DO NOT translate between frameworks (preserve React as React, Vue as Vue, etc.)
@@ -186,6 +440,7 @@ Apply the requested changes to the codebase. Be precise and preserve the existin
 - Preserve existing file structure
 - Follow the project's coding style
 - Ensure all changes will build successfully
+- PRESERVE the project's branding, colors, theme, and visual identity in ALL generated code
 
 Respond with a JSON array of file modifications in this format:
 [
@@ -205,7 +460,7 @@ Respond with a JSON array of file modifications in this format:
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 4096,
+      max_tokens: 16384,
       system: systemPrompt,
       messages: [
         {
