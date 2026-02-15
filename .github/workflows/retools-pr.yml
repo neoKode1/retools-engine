@@ -98,6 +98,8 @@ jobs:
       # ===================================================================
       - name: Webhook - Cloning Complete
         if: always()
+        env:
+          RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
           node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
@@ -180,6 +182,8 @@ jobs:
       # ===================================================================
       - name: Webhook - AI Complete
         if: always()
+        env:
+          RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
           node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
@@ -257,6 +261,8 @@ jobs:
       # ===================================================================
       - name: Webhook - Success
         if: success()
+        env:
+          RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
           node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
@@ -271,6 +277,8 @@ jobs:
       # ===================================================================
       - name: Webhook - Failure
         if: failure()
+        env:
+          RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
           node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
