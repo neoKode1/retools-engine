@@ -15,6 +15,14 @@ jobs:
 
     steps:
       # ===================================================================
+      # STEP 0: Checkout Pegasus Retools Engine (for scripts)
+      # ===================================================================
+      - name: Checkout Pegasus Retools Engine
+        uses: actions/checkout@v4
+        with:
+          path: pegasus-engine
+
+      # ===================================================================
       # STEP 1: Parse Job Payload
       # ===================================================================
       - name: Parse Job Payload
@@ -91,7 +99,7 @@ jobs:
       - name: Webhook - Cloning Complete
         if: always()
         run: |
-          node ${{ github.workspace }}/scripts/webhook-driver.js \
+          node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "cloning_complete" \
             --message "Repository cloned successfully" \
@@ -140,14 +148,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           echo "🤖 Applying AI changes..."
-          
+
           PROMPT=$(cat /tmp/prompt.txt)
-          
+
           # Use Claude API to generate changes
-          node ${{ github.workspace }}/scripts/ai-driver.js \
+          node ../pegasus-engine/scripts/ai-driver.js \
             --prompt "$PROMPT" \
             --working-dir "$(pwd)"
-          
+
           echo "✅ AI changes applied"
 
       # ===================================================================
@@ -173,7 +181,7 @@ jobs:
       - name: Webhook - AI Complete
         if: always()
         run: |
-          node ${{ github.workspace }}/scripts/webhook-driver.js \
+          node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "ai_complete" \
             --message "AI changes applied and committed" \
@@ -250,7 +258,7 @@ jobs:
       - name: Webhook - Success
         if: success()
         run: |
-          node ${{ github.workspace }}/scripts/webhook-driver.js \
+          node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "completed" \
             --message "PR created successfully" \
@@ -264,7 +272,7 @@ jobs:
       - name: Webhook - Failure
         if: failure()
         run: |
-          node ${{ github.workspace }}/scripts/webhook-driver.js \
+          node pegasus-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "failed" \
             --message "Workflow failed - check logs" \
