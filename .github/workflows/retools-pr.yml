@@ -29,7 +29,9 @@ jobs:
         id: parse
         run: |
           echo "Parsing job payload..."
-          echo "${{ inputs.job_payload }}" > /tmp/job_payload.json
+          cat > /tmp/job_payload.json << 'EOF'
+          ${{ inputs.job_payload }}
+          EOF
           
           JOB_ID=$(jq -r '.job_id' /tmp/job_payload.json)
           REPO_URL=$(jq -r '.repo_url' /tmp/job_payload.json)
