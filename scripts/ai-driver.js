@@ -15,9 +15,10 @@ const { execSync } = require('child_process');
 const args = process.argv.slice(2);
 const promptIndex = args.indexOf('--prompt');
 const workingDirIndex = args.indexOf('--working-dir');
+const fixMode = args.includes('--fix-mode');
 
 if (promptIndex === -1 || workingDirIndex === -1) {
-  console.error('Usage: ai-driver.js --prompt "..." --working-dir /path/to/repo');
+  console.error('Usage: ai-driver.js --prompt "..." --working-dir /path/to/repo [--fix-mode]');
   process.exit(1);
 }
 
@@ -31,6 +32,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
 
 console.log('🤖 Retools AI Driver');
 console.log('📁 Working directory:', workingDir);
+console.log('🔧 Fix mode:', fixMode ? 'ENABLED (fixing build errors)' : 'DISABLED (initial changes)');
 console.log('💬 Prompt:', prompt.substring(0, 100) + '...');
 
 // Change to working directory
@@ -136,10 +138,39 @@ function detectFramework(pkg) {
 /**
  * Call Claude API to generate changes
  */
-async function callClaude(prompt, context) {
+async function callClaude(prompt, context, isFixMode = false) {
   console.log('\n🤖 Calling Claude API...');
 
-  const systemPrompt = `You are Retools AI, an expert code modification assistant.
+  const systemPrompt = isFixMode
+    ? `You are Retools AI, an expert debugging and error-fixing assistant.
+
+**Context:**
+- Framework: ${context.framework || 'Unknown'}
+- Files: ${context.files.length} source files
+- Dependencies: ${context.dependencies?.slice(0, 10).join(', ') || 'None'}
+
+**Your task:**
+The previous AI changes caused a build failure. Analyze the build error and fix ONLY the issues causing the build to fail.
+
+**Critical Instructions:**
+- Focus ONLY on fixing the build errors shown in the prompt
+- Make MINIMAL changes - only what's needed to fix the build
+- DO NOT add new features or make unrelated changes
+- Preserve all existing functionality
+- Follow the project's coding style and framework conventions
+- If the error is about missing dependencies, add them to package.json
+- If the error is about syntax, fix the syntax errors
+- If the error is about missing files, create them with minimal content
+
+Respond with a JSON array of file modifications in this format:
+[
+  {
+    "path": "relative/path/to/file.js",
+    "action": "modify" | "create" | "delete",
+    "content": "full file content after changes"
+  }
+]`
+    : `You are Retools AI, an expert code modification assistant.
 
 **Context:**
 - Framework: ${context.framework || 'Unknown'}
@@ -154,6 +185,7 @@ Apply the requested changes to the codebase. Be precise and preserve the existin
 - Make minimal, targeted changes
 - Preserve existing file structure
 - Follow the project's coding style
+- Ensure all changes will build successfully
 
 Respond with a JSON array of file modifications in this format:
 [
@@ -244,10 +276,14 @@ async function main() {
   try {
     const files = scanRepository();
     const context = buildContext(files);
-    const modifications = await callClaude(prompt, context);
+    const modifications = await callClaude(prompt, context, fixMode);
     applyChanges(modifications);
 
-    console.log('\n✅ AI driver completed successfully');
+    if (fixMode) {
+      console.log('\n✅ AI auto-fix completed successfully');
+    } else {
+      console.log('\n✅ AI driver completed successfully');
+    }
     process.exit(0);
   } catch (error) {
     console.error('\n❌ AI driver failed:', error);

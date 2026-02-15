@@ -194,22 +194,132 @@ jobs:
             --webhook-url "${{ steps.parse.outputs.webhook_url }}"
 
       # ===================================================================
-      # STEP 9: Build Project (Optional)
+      # STEP 9: Build and Auto-Fix Loop (Up to 3 AI Attempts)
       # ===================================================================
-      - name: Build Project
+      - name: Build with AI Auto-Fix
+        id: build
         working-directory: ./repo
-        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -f "package.json" ]; then
-            BUILD_SCRIPT=$(jq -r '.scripts.build // empty' package.json)
-            if [ -n "$BUILD_SCRIPT" ]; then
-              echo "🔨 Building project..."
-              pnpm build || npm run build || yarn build || true
-            fi
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+          BUILD_SUCCESS=false
+
+          # Check if project has a build script
+          if [ ! -f "package.json" ]; then
+            echo "ℹ️  No package.json found, skipping build validation"
+            echo "build_success=true" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
+          BUILD_SCRIPT=$(jq -r '.scripts.build // empty' package.json)
+          if [ -z "$BUILD_SCRIPT" ]; then
+            echo "ℹ️  No build script found in package.json, skipping build validation"
+            echo "build_success=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Determine package manager
+          if [ -f "pnpm-lock.yaml" ]; then
+            PKG_MANAGER="pnpm"
+          elif [ -f "yarn.lock" ]; then
+            PKG_MANAGER="yarn"
+          else
+            PKG_MANAGER="npm"
+          fi
+
+          echo "📦 Using package manager: $PKG_MANAGER"
+
+          # Build and auto-fix loop
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo ""
+            echo "🔨 Build Attempt $ATTEMPT of $MAX_ATTEMPTS..."
+
+            # Try to build
+            BUILD_OUTPUT=$(mktemp)
+            if [ "$PKG_MANAGER" = "pnpm" ]; then
+              pnpm build > "$BUILD_OUTPUT" 2>&1 && BUILD_SUCCESS=true || BUILD_SUCCESS=false
+            elif [ "$PKG_MANAGER" = "yarn" ]; then
+              yarn build > "$BUILD_OUTPUT" 2>&1 && BUILD_SUCCESS=true || BUILD_SUCCESS=false
+            else
+              npm run build > "$BUILD_OUTPUT" 2>&1 && BUILD_SUCCESS=true || BUILD_SUCCESS=false
+            fi
+
+            if [ "$BUILD_SUCCESS" = true ]; then
+              echo "✅ Build successful on attempt $ATTEMPT!"
+              echo "build_success=true" >> $GITHUB_OUTPUT
+              echo "build_attempts=$ATTEMPT" >> $GITHUB_OUTPUT
+              rm -f "$BUILD_OUTPUT"
+              exit 0
+            fi
+
+            # Build failed
+            echo "❌ Build failed on attempt $ATTEMPT"
+            cat "$BUILD_OUTPUT"
+
+            # If this was the last attempt, fail
+            if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+              echo ""
+              echo "💔 Build failed after $MAX_ATTEMPTS attempts. Giving up."
+              echo "build_success=false" >> $GITHUB_OUTPUT
+              echo "build_attempts=$ATTEMPT" >> $GITHUB_OUTPUT
+              rm -f "$BUILD_OUTPUT"
+              exit 1
+            fi
+
+            # Ask AI to fix the build error
+            echo ""
+            echo "🤖 Asking AI to fix build errors (attempt $ATTEMPT)..."
+
+            # Create fix prompt with build error
+            echo "The previous changes caused a build failure. Please analyze the build error below and fix the issues." > /tmp/fix_prompt.txt
+            echo "" >> /tmp/fix_prompt.txt
+            echo "BUILD ERROR:" >> /tmp/fix_prompt.txt
+            cat "$BUILD_OUTPUT" >> /tmp/fix_prompt.txt
+
+            # Run AI fix
+            node ../pegasus-engine/scripts/ai-driver.js \
+              --prompt "$(cat /tmp/fix_prompt.txt)" \
+              --working-dir "$(pwd)" \
+              --fix-mode
+
+            # Commit the fix
+            if [ -n "$(git status --porcelain)" ]; then
+              git add .
+              git commit -m "🔧 AI Auto-fix attempt $ATTEMPT: Fix build errors"
+              echo "✅ AI applied fixes, retrying build..."
+            else
+              echo "⚠️  AI made no changes, retrying anyway..."
+            fi
+
+            rm -f "$BUILD_OUTPUT"
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
       # ===================================================================
-      # STEP 10: Push Branch
+      # STEP 10: Send Webhook - Build Complete
+      # ===================================================================
+      - name: Webhook - Build Complete
+        if: steps.build.outputs.build_success == 'true'
+        env:
+          RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
+        run: |
+          ATTEMPTS="${{ steps.build.outputs.build_attempts }}"
+          if [ "$ATTEMPTS" = "1" ]; then
+            MESSAGE="Build successful on first attempt"
+          else
+            MESSAGE="Build successful after $ATTEMPTS AI fix attempts"
+          fi
+
+          node pegasus-engine/scripts/webhook-driver.js \
+            --job-id "${{ steps.parse.outputs.job_id }}" \
+            --status "build_complete" \
+            --message "$MESSAGE" \
+            --webhook-url "${{ steps.parse.outputs.webhook_url }}"
+
+      # ===================================================================
+      # STEP 11: Push Branch
       # ===================================================================
       - name: Push Branch
         working-directory: ./repo
@@ -229,7 +339,7 @@ jobs:
         id: push
 
       # ===================================================================
-      # STEP 11: Create Pull Request
+      # STEP 12: Create Pull Request
       # ===================================================================
       - name: Create Pull Request
         id: pr
@@ -259,7 +369,7 @@ jobs:
           echo "✅ Pull Request created: $PR_URL"
 
       # ===================================================================
-      # STEP 12: Send Success Webhook
+      # STEP 13: Send Success Webhook
       # ===================================================================
       - name: Webhook - Success
         if: success()
@@ -275,7 +385,7 @@ jobs:
             --webhook-url "${{ steps.parse.outputs.webhook_url }}"
 
       # ===================================================================
-      # STEP 13: Send Failure Webhook
+      # STEP 14: Send Failure Webhook
       # ===================================================================
       - name: Webhook - Failure
         if: failure()
