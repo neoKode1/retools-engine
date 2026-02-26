@@ -404,23 +404,86 @@ jobs:
           echo "✅ Pull Request created: $PR_URL"
 
       # ===================================================================
-      # STEP 14: Send Success Webhook
+      # STEP 14: Poll for Vercel Preview URL
+      # After the PR is opened, Vercel auto-deploys a preview build and
+      # posts a comment on the PR. We poll GitHub PR comments for up to
+      # 3 minutes looking for that comment.
+      # ===================================================================
+      - name: Poll for Vercel Preview URL
+        id: vercel
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          USER_TOKEN=$(cat /tmp/user_github_token.txt)
+          PR_NUMBER="${{ steps.pr.outputs.pr_number }}"
+          REPO_PATH="${{ steps.parse.outputs.repo_path }}"
+
+          echo "⏳ Waiting for Vercel preview deployment comment on PR #$PR_NUMBER..."
+
+          PREVIEW_URL=""
+          MAX_WAIT=180   # seconds
+          INTERVAL=10
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+            echo "   Checking comments after ${ELAPSED}s..."
+
+            # Fetch all PR comments using the user's token (works for private repos)
+            COMMENTS=$(curl -s \
+              -H "Authorization: Bearer $USER_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPO_PATH}/issues/${PR_NUMBER}/comments")
+
+            # Look for a Vercel bot comment containing a preview URL
+            PREVIEW_URL=$(echo "$COMMENTS" | jq -r '
+              .[] |
+              select(.user.login == "vercel[bot]" or (.body | test("vercel.app"))) |
+              .body
+            ' | grep -oP 'https://[a-zA-Z0-9\-]+\.vercel\.app[^\s")\]]*' | head -n 1 || true)
+
+            if [ -n "$PREVIEW_URL" ]; then
+              echo "✅ Vercel preview URL found: $PREVIEW_URL"
+              echo "preview_url=$PREVIEW_URL" >> $GITHUB_OUTPUT
+              break
+            fi
+          done
+
+          if [ -z "$PREVIEW_URL" ]; then
+            echo "ℹ️  No Vercel preview URL found within ${MAX_WAIT}s (repo may not be linked to Vercel)"
+            echo "preview_url=" >> $GITHUB_OUTPUT
+          fi
+
+      # ===================================================================
+      # STEP 15: Send Success Webhook
       # ===================================================================
       - name: Webhook - Success
         if: success()
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
-          node retools-engine/scripts/webhook-driver.js \
-            --job-id "${{ steps.parse.outputs.job_id }}" \
-            --status "preview_ready" \
-            --message "PR created successfully - ready for review" \
-            --pr-url "${{ steps.pr.outputs.pr_url }}" \
-            --pr-number "${{ steps.pr.outputs.pr_number }}" \
-            --webhook-url "${{ steps.parse.outputs.webhook_url }}"
+          PREVIEW_URL="${{ steps.vercel.outputs.preview_url }}"
+
+          # Build the webhook command, optionally including the preview URL
+          CMD="node retools-engine/scripts/webhook-driver.js \
+            --job-id \"${{ steps.parse.outputs.job_id }}\" \
+            --status \"preview_ready\" \
+            --message \"PR created successfully - ready for review\" \
+            --pr-url \"${{ steps.pr.outputs.pr_url }}\" \
+            --pr-number \"${{ steps.pr.outputs.pr_number }}\" \
+            --webhook-url \"${{ steps.parse.outputs.webhook_url }}\""
+
+          if [ -n "$PREVIEW_URL" ]; then
+            CMD="$CMD --preview-url \"$PREVIEW_URL\""
+          fi
+
+          eval $CMD
 
       # ===================================================================
-      # STEP 15: Send Failure Webhook
+      # STEP 16: Send Failure Webhook
       # ===================================================================
       - name: Webhook - Failure
         if: failure()
@@ -435,7 +498,7 @@ jobs:
             --webhook-url "${{ steps.parse.outputs.webhook_url }}"
 
       # ===================================================================
-      # STEP 14: Cleanup
+      # STEP 17: Cleanup
       # ===================================================================
       - name: Cleanup Secrets
         if: always()

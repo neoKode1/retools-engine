@@ -22,6 +22,7 @@ const status = getArg('--status');
 const message = getArg('--message');
 const webhookUrl = getArg('--webhook-url');
 const prUrl = getArg('--pr-url');
+const previewUrl = getArg('--preview-url');
 const prNumber = getArg('--pr-number');
 const githubRunUrl = getArg('--github-run-url');
 
@@ -52,6 +53,11 @@ function buildPayload() {
 
   if (prUrl) {
     payload.pr_url = prUrl;
+  }
+
+  // Live hosted preview URL (Vercel/Netlify/etc.) — rendered as an iframe in the Noelle dashboard
+  if (previewUrl) {
+    payload.preview_url = previewUrl;
   }
 
   if (prNumber) {
