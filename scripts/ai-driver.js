@@ -459,8 +459,8 @@ Respond with a JSON array of file modifications in this format:
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-3-haiku-20240307',
-      max_tokens: 4096,
+      model: 'claude-sonnet-4-5',
+      max_tokens: 16000,
       system: systemPrompt,
       messages: [
         {
