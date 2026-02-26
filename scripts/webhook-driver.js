@@ -92,7 +92,7 @@ async function sendWebhook() {
       headers: {
         'Content-Type': 'application/json',
         'x-webhook-signature': signature,
-        'User-Agent': 'Retools-Pegasus-Engine',
+        'User-Agent': 'Retools-Builder-Engine',
       },
       body: JSON.stringify(payload),
     });

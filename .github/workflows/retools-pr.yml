@@ -15,12 +15,12 @@ jobs:
 
     steps:
       # ===================================================================
-      # STEP 0: Checkout Pegasus Retools Engine (for scripts)
+      # STEP 0: Checkout Retools Builder Engine (for scripts)
       # ===================================================================
-      - name: Checkout Pegasus Retools Engine
+      - name: Checkout Retools Builder Engine
         uses: actions/checkout@v4
         with:
-          path: pegasus-engine
+          path: retools-engine
 
       # ===================================================================
       # STEP 1: Parse Job Payload
@@ -103,7 +103,7 @@ jobs:
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
-          node pegasus-engine/scripts/webhook-driver.js \
+          node retools-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "cloning" \
             --message "Repository cloned successfully" \
@@ -150,7 +150,7 @@ jobs:
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
-          node pegasus-engine/scripts/webhook-driver.js \
+          node retools-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "customizing" \
             --message "AI is analyzing and customizing your code..." \
@@ -169,7 +169,7 @@ jobs:
           PROMPT=$(cat /tmp/prompt.txt)
 
           # Use Claude API to generate changes
-          node ../pegasus-engine/scripts/ai-driver.js \
+          node ../retools-engine/scripts/ai-driver.js \
             --prompt "$PROMPT" \
             --working-dir "$(pwd)"
 
@@ -199,7 +199,7 @@ jobs:
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
-          node pegasus-engine/scripts/webhook-driver.js \
+          node retools-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "building" \
             --message "Validating build with AI auto-fix..." \
@@ -284,7 +284,7 @@ jobs:
             # Send webhook about fix attempt
             echo ""
             echo "📡 Sending webhook - AI attempting fix $ATTEMPT..."
-            node ../pegasus-engine/scripts/webhook-driver.js \
+            node ../retools-engine/scripts/webhook-driver.js \
               --job-id "${{ steps.parse.outputs.job_id }}" \
               --status "building" \
               --message "Build failed, AI attempting fix $ATTEMPT of 3..." \
@@ -301,7 +301,7 @@ jobs:
             cat "$BUILD_OUTPUT" >> /tmp/fix_prompt.txt
 
             # Run AI fix
-            node ../pegasus-engine/scripts/ai-driver.js \
+            node ../retools-engine/scripts/ai-driver.js \
               --prompt "$(cat /tmp/fix_prompt.txt)" \
               --working-dir "$(pwd)" \
               --fix-mode
@@ -334,7 +334,7 @@ jobs:
             MESSAGE="Build successful after $ATTEMPTS AI fix attempts"
           fi
 
-          node pegasus-engine/scripts/webhook-driver.js \
+          node retools-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "building" \
             --message "$MESSAGE" \
@@ -347,7 +347,7 @@ jobs:
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
-          node pegasus-engine/scripts/webhook-driver.js \
+          node retools-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "deploying" \
             --message "Creating pull request..." \
@@ -411,7 +411,7 @@ jobs:
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
-          node pegasus-engine/scripts/webhook-driver.js \
+          node retools-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "preview_ready" \
             --message "PR created successfully - ready for review" \
@@ -427,7 +427,7 @@ jobs:
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
-          node pegasus-engine/scripts/webhook-driver.js \
+          node retools-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "failed" \
             --message "Workflow failed - check logs" \

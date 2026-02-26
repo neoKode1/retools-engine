@@ -1,4 +1,4 @@
-# Pegasus Retools Engine
+# Retools Builder Engine
 
 **AI-powered PR generation workflow for Retools**
 
@@ -41,7 +41,7 @@ The workflow is triggered via `workflow_dispatch` with a single JSON payload inp
   "branch": "main",
   "prompt": "Add a dark mode toggle to the header",
   "github_token": "ghp_...",
-  "webhook_url": "https://retools.streamcube.link/api/webhooks/pegasus",
+  "webhook_url": "https://retools.vercel.app/api/webhooks/builder",
   "user_email": "user@example.com",
   "user_name": "John Doe"
 }
@@ -99,7 +99,7 @@ Sends status updates to Retools at each major step:
 
 ## 🔐 Required Secrets
 
-Configure at: https://github.com/YOUR_ORG/pegasus-retools-engine/settings/secrets/actions
+Configure at: https://github.com/YOUR_ORG/retools-engine/settings/secrets/actions
 
 | Secret | Description | Where to Get |
 |--------|-------------|--------------|
@@ -180,14 +180,14 @@ act workflow_dispatch \
 
 ### View Workflow Runs
 
-https://github.com/YOUR_ORG/pegasus-retools-engine/actions/workflows/retools-pr.yml
+https://github.com/YOUR_ORG/retools-engine/actions/workflows/retools-pr.yml
 
 ### Check Job Status
 
 Query the Retools API:
 
 ```bash
-curl "https://retools.streamcube.link/api/jobs/{job_id}"
+curl "https://retools.vercel.app/api/jobs/{job_id}"
 ```
 
 ---
