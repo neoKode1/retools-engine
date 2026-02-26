@@ -415,7 +415,7 @@ jobs:
       # ===================================================================
       - name: Create Pull Request
         id: pr
-        if: steps.push.outputs.pushed == 'true'
+        if: always() && steps.push.outputs.pushed == 'true'
         run: |
           USER_TOKEN=$(cat /tmp/user_github_token.txt)
           PROMPT=$(cat /tmp/prompt.txt)
@@ -468,7 +468,7 @@ jobs:
       # ===================================================================
       - name: Poll for Vercel Preview URL
         id: vercel
-        if: steps.pr.outputs.draft == 'false' && steps.pr.outputs.pr_number != ''
+        if: always() && steps.pr.outputs.draft == 'false' && steps.pr.outputs.pr_number != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -519,7 +519,7 @@ jobs:
       # Fires whenever a PR was created (build passed OR draft on failure).
       # ===================================================================
       - name: Webhook - PR Created
-        if: steps.pr.outputs.pr_url != '' && steps.pr.outputs.pr_url != 'null'
+        if: always() && steps.pr.outputs.pr_url != '' && steps.pr.outputs.pr_url != 'null'
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
