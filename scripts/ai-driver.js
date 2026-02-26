@@ -459,7 +459,7 @@ Respond with a JSON array of file modifications in this format:
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'claude-3-7-sonnet-20250219',
       max_tokens: 16384,
       system: systemPrompt,
       messages: [
