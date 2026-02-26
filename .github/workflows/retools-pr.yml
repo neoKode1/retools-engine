@@ -77,23 +77,46 @@ jobs:
       # STEP 3: Checkout User's Repository
       # ===================================================================
       - name: Checkout User Repository
+        id: checkout
         run: |
           echo "Cloning ${{ steps.parse.outputs.repo_url }}..."
-          
+
           USER_TOKEN=$(cat /tmp/user_github_token.txt)
-          
+
           # Clone with user's token
           git clone "https://x-access-token:${USER_TOKEN}@github.com/${{ steps.parse.outputs.repo_path }}.git" repo
           cd repo
-          
-          # Checkout target branch
-          git checkout "${{ steps.parse.outputs.branch }}" || git checkout -b "${{ steps.parse.outputs.branch }}"
-          
+
+          # Auto-detect the real default branch.
+          # Use the requested branch if it exists on the remote; otherwise fall back
+          # to the repo's actual default (handles main vs master mismatch).
+          REQUESTED_BRANCH="${{ steps.parse.outputs.branch }}"
+          if git show-ref --verify --quiet "refs/remotes/origin/${REQUESTED_BRANCH}"; then
+            BASE_BRANCH="$REQUESTED_BRANCH"
+            echo "✅ Using requested branch: $BASE_BRANCH"
+          else
+            BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || echo "master")
+            echo "⚠️  Branch '$REQUESTED_BRANCH' not found on remote. Using default: $BASE_BRANCH"
+          fi
+
+          git checkout "$BASE_BRANCH"
+
+          # Create a feature branch for all AI changes — immediately, before any work.
+          # This ensures changes are always on an isolated branch, never directly on
+          # the default branch.
+          JOB_ID="${{ steps.parse.outputs.job_id }}"
+          SHORT_ID="${JOB_ID:4:8}"
+          FEATURE_BRANCH="noelle/${SHORT_ID}"
+          git checkout -b "$FEATURE_BRANCH"
+
           # Configure git
-          git config user.email "${{ steps.parse.outputs.user_email || 'retools@nexartis.com' }}"
-          git config user.name "${{ steps.parse.outputs.user_name || 'Retools AI' }}"
-          
-          echo "✅ Repository cloned and configured"
+          git config user.email "${{ steps.parse.outputs.user_email || 'noelle@nexartis.com' }}"
+          git config user.name "${{ steps.parse.outputs.user_name || 'Noelle AI' }}"
+
+          echo "base_branch=$BASE_BRANCH" >> $GITHUB_OUTPUT
+          echo "feature_branch=$FEATURE_BRANCH" >> $GITHUB_OUTPUT
+
+          echo "✅ Repository cloned. Working on branch: $FEATURE_BRANCH (base: $BASE_BRANCH)"
 
       # ===================================================================
       # STEP 4: Send Webhook - Cloning Complete
@@ -342,57 +365,86 @@ jobs:
 
       # ===================================================================
       # STEP 11: Send Webhook - Starting Deployment
+      # Runs even if build failed — we still push the branch and open a PR.
       # ===================================================================
       - name: Webhook - Starting Deployment
+        if: always()
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
           node retools-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "deploying" \
-            --message "Creating pull request..." \
+            --message "Pushing branch and creating pull request..." \
             --webhook-url "${{ steps.parse.outputs.webhook_url }}"
 
       # ===================================================================
       # STEP 12: Push Branch
+      # Runs even if the build failed — we always push the AI's work so the
+      # user can inspect, fix, and merge at their discretion.
       # ===================================================================
       - name: Push Branch
+        id: push
+        if: always()
         working-directory: ./repo
         run: |
+          # Only push if there are commits beyond the base branch
+          FEATURE_BRANCH="${{ steps.checkout.outputs.feature_branch }}"
+          BASE_BRANCH="${{ steps.checkout.outputs.base_branch }}"
+
+          COMMIT_COUNT=$(git rev-list --count "origin/${BASE_BRANCH}..HEAD" 2>/dev/null || echo "0")
+          if [ "$COMMIT_COUNT" -eq 0 ]; then
+            echo "⚠️  No commits on feature branch — nothing to push"
+            echo "pushed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           USER_TOKEN=$(cat /tmp/user_github_token.txt)
 
-          # Create feature branch
-          FEATURE_BRANCH="retools/ai-changes-$(date +%s)"
-          git checkout -b "$FEATURE_BRANCH"
-
-          # Push with user's token
           git remote set-url origin "https://x-access-token:${USER_TOKEN}@github.com/${{ steps.parse.outputs.repo_path }}.git"
           git push -u origin "$FEATURE_BRANCH"
 
           echo "feature_branch=$FEATURE_BRANCH" >> $GITHUB_OUTPUT
+          echo "pushed=true" >> $GITHUB_OUTPUT
           echo "✅ Branch pushed: $FEATURE_BRANCH"
-        id: push
 
       # ===================================================================
       # STEP 13: Create Pull Request
+      # Opens a regular PR on build success; a draft PR on build failure so
+      # the user can still review the AI's work and decide whether to merge.
       # ===================================================================
       - name: Create Pull Request
         id: pr
+        if: steps.push.outputs.pushed == 'true'
         run: |
           USER_TOKEN=$(cat /tmp/user_github_token.txt)
           PROMPT=$(cat /tmp/prompt.txt)
+          BASE_BRANCH="${{ steps.checkout.outputs.base_branch }}"
+          FEATURE_BRANCH="${{ steps.push.outputs.feature_branch }}"
+          BUILD_SUCCESS="${{ steps.build.outputs.build_success }}"
 
-          # Create PR using GitHub API
-          PR_RESPONSE=$(curl -X POST \
+          # Draft PR if build failed — clearly signals it needs review before merge
+          if [ "$BUILD_SUCCESS" = "true" ]; then
+            DRAFT="false"
+            TITLE="🤖 Noelle AI: ${PROMPT:0:72}"
+            BODY="## AI-Generated Changes\n\n**Prompt:**\n\n${PROMPT}\n\n---\n\n*Generated by [Noelle](https://thenoelle.app) — AI-powered code changes*"
+          else
+            DRAFT="true"
+            TITLE="⚠️ [Draft] Noelle AI: ${PROMPT:0:65}"
+            BODY="## AI-Generated Changes *(build check did not pass)*\n\n**Prompt:**\n\n${PROMPT}\n\n---\n\n> ⚠️ The automated build validation failed after 3 AI fix attempts. The changes are pushed here as a **draft PR** for your review. Please inspect the diff, fix any remaining issues, and mark the PR ready for review when it's good to merge.\n\n*Generated by [Noelle](https://thenoelle.app) — AI-powered code changes*"
+          fi
+
+          PR_RESPONSE=$(curl -s -X POST \
             -H "Authorization: Bearer $USER_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ steps.parse.outputs.repo_path }}/pulls" \
             -d "{
-              \"title\": \"🤖 Retools AI: ${PROMPT:0:72}\",
-              \"body\": \"## AI-Generated Changes\n\n**Prompt:**\n\n${PROMPT}\n\n---\n\n*Generated by [Retools](https://retools.dev) - AI-powered PR generator*\",
-              \"head\": \"${{ steps.push.outputs.feature_branch }}\",
-              \"base\": \"${{ steps.parse.outputs.branch }}\"
+              \"title\": \"$TITLE\",
+              \"body\": \"$BODY\",
+              \"head\": \"$FEATURE_BRANCH\",
+              \"base\": \"$BASE_BRANCH\",
+              \"draft\": $DRAFT
             }")
 
           PR_URL=$(echo "$PR_RESPONSE" | jq -r '.html_url')
@@ -400,8 +452,13 @@ jobs:
 
           echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "draft=$DRAFT" >> $GITHUB_OUTPUT
 
-          echo "✅ Pull Request created: $PR_URL"
+          if [ "$DRAFT" = "true" ]; then
+            echo "⚠️  Draft Pull Request created (build failed): $PR_URL"
+          else
+            echo "✅ Pull Request created: $PR_URL"
+          fi
 
       # ===================================================================
       # STEP 14: Poll for Vercel Preview URL
@@ -411,7 +468,7 @@ jobs:
       # ===================================================================
       - name: Poll for Vercel Preview URL
         id: vercel
-        if: success()
+        if: steps.pr.outputs.draft == 'false' && steps.pr.outputs.pr_number != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -458,20 +515,29 @@ jobs:
           fi
 
       # ===================================================================
-      # STEP 15: Send Success Webhook
+      # STEP 15: Send Success/Draft Webhook
+      # Fires whenever a PR was created (build passed OR draft on failure).
       # ===================================================================
-      - name: Webhook - Success
-        if: success()
+      - name: Webhook - PR Created
+        if: steps.pr.outputs.pr_url != '' && steps.pr.outputs.pr_url != 'null'
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
           PREVIEW_URL="${{ steps.vercel.outputs.preview_url }}"
+          IS_DRAFT="${{ steps.pr.outputs.draft }}"
 
-          # Build the webhook command, optionally including the preview URL
+          if [ "$IS_DRAFT" = "true" ]; then
+            STATUS="preview_ready"
+            MESSAGE="Draft PR created — build needs review before merging"
+          else
+            STATUS="preview_ready"
+            MESSAGE="PR created successfully — ready for review and merge"
+          fi
+
           CMD="node retools-engine/scripts/webhook-driver.js \
             --job-id \"${{ steps.parse.outputs.job_id }}\" \
-            --status \"preview_ready\" \
-            --message \"PR created successfully - ready for review\" \
+            --status \"$STATUS\" \
+            --message \"$MESSAGE\" \
             --pr-url \"${{ steps.pr.outputs.pr_url }}\" \
             --pr-number \"${{ steps.pr.outputs.pr_number }}\" \
             --webhook-url \"${{ steps.parse.outputs.webhook_url }}\""
@@ -484,16 +550,17 @@ jobs:
 
       # ===================================================================
       # STEP 16: Send Failure Webhook
+      # Only fires when no PR could be created at all (e.g., clone failed).
       # ===================================================================
       - name: Webhook - Failure
-        if: failure()
+        if: failure() && (steps.pr.outputs.pr_url == '' || steps.pr.outputs.pr_url == 'null')
         env:
           RETOOLS_WEBHOOK_SECRET: ${{ secrets.RETOOLS_WEBHOOK_SECRET }}
         run: |
           node retools-engine/scripts/webhook-driver.js \
             --job-id "${{ steps.parse.outputs.job_id }}" \
             --status "failed" \
-            --message "Workflow failed - check logs" \
+            --message "Workflow failed before a PR could be created — check logs" \
             --github-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --webhook-url "${{ steps.parse.outputs.webhook_url }}"
 
