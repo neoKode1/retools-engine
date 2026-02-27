@@ -414,6 +414,7 @@ The previous AI changes caused a build failure. Analyze the build error and fix 
 - If the error is about missing dependencies, add them to package.json
 - If the error is about syntax, fix the syntax errors
 - If the error is about missing files, create them with minimal content
+- PROP INTERFACE RULE: If the error is a TypeScript prop mismatch (e.g., "Property X does not exist on type Props"), find EVERY file that imports the component with the changed interface and update ALL of them in the same response. Never patch the component definition without also fixing every caller.
 ${brandingInstructions}
 Respond with a JSON array of file modifications in this format:
 [
@@ -440,6 +441,7 @@ Apply the requested changes to the codebase. Be precise and preserve the existin
 - Preserve existing file structure
 - Follow the project's coding style
 - Ensure all changes will build successfully
+- PROP INTERFACE RULE: If you add, remove, or rename props on any component, you MUST search the entire file list for every place that component is imported and used, then update ALL callers to match the new interface in the same response. Changing a component interface without updating every caller causes TypeScript build failures.
 - PRESERVE the project's branding, colors, theme, and visual identity in ALL generated code
 
 Respond with a JSON array of file modifications in this format:
