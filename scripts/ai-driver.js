@@ -462,7 +462,7 @@ Respond with a JSON array of file modifications in this format:
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-5',
-      max_tokens: 16000,
+      max_tokens: 32000,
       system: systemPrompt,
       messages: [
         {
@@ -479,20 +479,43 @@ Respond with a JSON array of file modifications in this format:
   }
 
   const data = await response.json();
-  const content = data.content[0].text;
+  const rawContent = data.content[0].text;
+  const stopReason = data.stop_reason;
 
-  console.log('✅ Claude response received');
+  console.log(`✅ Claude response received (stop_reason: ${stopReason})`);
 
-  // Parse JSON response
+  if (stopReason === 'max_tokens') {
+    console.warn('⚠️  Response truncated at max_tokens — attempting JSON repair...');
+  }
+
+  // Parse JSON response, with repair fallback for truncated responses
   try {
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
+    const jsonMatch = rawContent.match(/\[\s\S\]*/);
+    const betterMatch = rawContent.match(/\[[\s\S]*\]/);
+    const match = betterMatch || jsonMatch;
+    if (!match) {
       throw new Error('No JSON array found in response');
     }
-    return JSON.parse(jsonMatch[0]);
+    let jsonStr = match[0];
+    // ensure it ends with ]
+    if (!jsonStr.trimEnd().endsWith(']')) jsonStr = jsonStr + '\n]';
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (parseErr) {
+      if (stopReason !== 'max_tokens') throw parseErr;
+      // Attempt repair: trim to the last complete object
+      console.warn('🔧 Attempting truncated JSON repair...');
+      const lastClose = jsonStr.lastIndexOf('\n  }');
+      if (lastClose === -1) throw parseErr;
+      const repaired = jsonStr.slice(0, lastClose + 4) + '\n]';
+      parsed = JSON.parse(repaired);
+      console.log(`🔧 JSON repair succeeded — recovered ${parsed.length} file modification(s)`);
+    }
+    return parsed;
   } catch (error) {
     console.error('❌ Failed to parse Claude response:', error);
-    console.log('Raw response:', content);
+    console.log('Raw response (first 2000 chars):', rawContent.slice(0, 2000));
     throw error;
   }
 }
